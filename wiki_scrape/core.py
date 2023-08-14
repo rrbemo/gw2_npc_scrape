@@ -107,3 +107,13 @@ def main(root_path, category):
 
 if __name__ == "__main__":
     main('https://wiki.guildwars2.com', "story_characters")
+
+    # categories to check:
+    # story_characters
+    # All "NPCs_by_rank" below
+        # Normal_NPCs
+        # Veteran_NPCs
+        # Elite_NPCs
+        # Epic_NPCs
+        # Legendary_NPCs
+        # Ambient_creatures
