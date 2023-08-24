@@ -25,23 +25,112 @@ def get_page_data(page_url):
     page_info = {}
     sauce = urllib.request.urlopen(page_url).read()
     soup = bs.BeautifulSoup(sauce, "lxml")
-    page_info['URL'] = page_url
-    page_info['Title'] = soup.find(id = 'firstHeading').get_text().strip()
-    info_box = soup.find('div', class_='infobox')
+    page_info['URL'] = page_url.strip()
+    page_info['Title'] = soup.find(id='firstHeading').get_text().strip()
+
+    # Parse up to the TOC. Everything after the TOC should be based on the contents of the TOC.
+    for tag in soup.find(id='mw-content-text').find('div', class_='mw-parser-output').children:
+        #print(tag)
+        # Ignore navigable strings
+        if isinstance(tag, bs.element.NavigableString):
+            continue
+        if tag.name == 'h2':
+            break
+        # Skip the infobox
+        if tag.name == 'div':
+            if 'class' in tag.attrs.keys() and 'infobox' not in tag['class']:
+                # Set the TOC to something else
+                if 'id' in tag.attrs.keys() and 'toc' in tag['id']:
+                    # This is the toc, let's store that for later parsing
+                    page_info['TOC'] = tag
+                # Else, just add it to the list of description items
+                else:
+                    if 'Description' in page_info.keys():
+                        page_info['Description'].append(tag)
+                    else:
+                        page_info['Description'] = [tag]
+            else:
+                # This is the infobox (multiple infoboxes will mess this up)
+                page_info['InfoBox'] = tag
+        # Else we will consider this as part of the description and add it.
+        elif 'Description' in page_info.keys():
+            page_info['Description'].append(tag)
+        else:
+            page_info['Description'] = [tag]
+
+        #     if 'spoiler-notice' in tag['class']:
+        #         # This is the overall spoiler text (states that there are spoilers and for what story)
+        #         if 'SpoilerAlert' in page_info.keys():
+        #             page_info['SpoilerAlert'].append(tag)
+        #         else:
+        #             page_info['SpoilerAlert'] = [tag]
+        # elif tag.name == 'table':
+        #     if 'expandable' in tag['class']:
+        #         # This is the actual spoiler hidden spoiler
+        #         if 'SpoilerText' in page_info.keys():
+        #             page_info['SpoilerText'].append(tag)
+        #         else:
+        #             page_info['SpoilerText'] = [tag]
+        # elif tag.name == 'p':
+            # This is the text for this section (description)
+
+    # Parse the remainder of the page based on the TOC.
+    sections = {}
+    if 'TOC' in page_info.keys():
+        print("TOC FOUND")
+        # Use the TOC to determine which sections we need to parse
+        for tag in page_info['TOC'].find('ul').children:
+            if isinstance(tag, bs.element.NavigableString):
+                continue
+            if tag.name == 'li' and 'class' in tag.attrs.keys() and 'toclevel-1' in tag['class']:
+                #sections[tag['href']] = tag.get_text().strip()
+                sections[tag.find('a')['href'].replace("#", "")] = tag.find('span', class_='toctext').get_text().strip()
+    else:
+        # There is no TOC and we should loop through each h2 heading to determine what to do
+        print("NO TOC")
+        for tag in soup.find('div', class_='mw-parser-output').children:
+            if isinstance(tag, bs.element.NavigableString):
+                continue
+            #print(tag)
+            if tag.name == 'h2':
+                headline = tag.find_next('span', class_='mw-headline')
+                if 'id' in headline.attrs.keys():
+                    sections[headline['id']] = headline.get_text().strip()
+        print(sections)
+
+    for k in sections.keys():
+        # Go to the beginning of that section
+        for tag in soup.find(id=k).next_siblings:
+            if isinstance(tag, bs.element.NavigableString):
+                continue
+            if tag.name == 'h2':
+                break
+            else:
+                if k in page_info.keys():
+                    page_info[k].append(tag)
+                else:
+                    page_info[k] = [tag]
+
+    return(page_info)
+
+
+# TODO: Make a function to pull out all the info from the infobox
+# THIS FUNCTION IS JUST A PLACEHOLDER!
+def parse_infobox(infobox_html):
+    # info_box was the text only way to parse.
+    # We should keep it as html and parse it that way to pull out multiple locations, etc.
     if info_box is not None:
         # Get their name
         page_info['Name'] = info_box.find(class_='heading').get_text().strip()
         page_info['Description'] = info_box.find_next_sibling('p').get_text().strip()
         # Get their details
-        # get all dt/dd pairs. This uses list comprehension to creat list of text for each element
+        # get all dt/dd pairs. This uses list comprehension to create list of text for each element
         # It ends up being value, pairs... 'Race': 'Human', 'Level': '11'...
         details = dict(zip([k.get_text().strip() for k in info_box.find_all('dt')],
                            [v.get_text().strip() for v in info_box.find_all('dd')]))
         for k, v in details.items():
-# TODO: Some keys have multiple values (location). This should be broken out somehow.
+            # TODO: Some keys have multiple values (location). This should be broken out somehow.
             page_info[k] = v
-
-    return(page_info)
 
 # Get story involvement (breaking it out because it is a bit involved)
 #TODO: does story involvement need to be their own table?
@@ -96,14 +185,28 @@ def get_data_from_pages(page_urls):
     return(page_infos)
 
 def main(root_path, category):
+
+    # Pull the pages from a category we want to scrape
     pages = get_category_pages(root_path, category)
-    # page_details = get_page_data(pages[2])
-    page_details = get_data_from_pages(pages[2:3])
+
+    # Get some info form the pages (this is pretty raw data that needs further parsing)
+    page_indecies = [2, 3, 71]
+    page_details = get_data_from_pages(pages[x] for x in page_indecies)
+
+    # Parse the infobox
+
+    # Parse section X
+
+    # Parse section Y... etc.
+
     # page_details = get_data_from_pages(pages)
     df = pd.DataFrame(page_details)
+
     # print("saving to file: /test_file.csv")
-    # df.to_csv('test_file.csv', index = False, header = True)
+    df.to_csv('test_file.csv', index = False, header = True)
     print(df)
+    # print(df.Description[2])
+    # print(df.TOC[2])
 
 if __name__ == "__main__":
     main('https://wiki.guildwars2.com', "story_characters")
