@@ -45,18 +45,18 @@ def get_page_data(page_url):
                     page_info['TOC'] = tag
                 # Else, just add it to the list of description items
                 else:
-                    if 'Description' in page_info.keys():
-                        page_info['Description'].append(tag)
+                    if 'Description_Data' in page_info.keys():
+                        page_info['Description_Data'].append(tag)
                     else:
-                        page_info['Description'] = [tag]
+                        page_info['Description_Data'] = tag
             else:
                 # This is the infobox (multiple infoboxes will mess this up)
                 page_info['InfoBox'] = tag
         # Else we will consider this as part of the description and add it.
-        elif 'Description' in page_info.keys():
-            page_info['Description'].append(tag)
+        elif 'Description_Data' in page_info.keys():
+            page_info['Description_Data'].append(tag)
         else:
-            page_info['Description'] = [tag]
+            page_info['Description_Data'] = tag
 
         #     if 'spoiler-notice' in tag['class']:
         #         # This is the overall spoiler text (states that there are spoilers and for what story)
@@ -98,6 +98,7 @@ def get_page_data(page_url):
                     sections[headline['id']] = headline.get_text().strip()
         print(sections)
 
+    # Make a column for each section found (TOC or by h2 tag)
     for k in sections.keys():
         # Go to the beginning of that section
         for tag in soup.find(id=k).next_siblings:
@@ -109,28 +110,53 @@ def get_page_data(page_url):
                 if k in page_info.keys():
                     page_info[k].append(tag)
                 else:
-                    page_info[k] = [tag]
+                    page_info[k] = tag
 
-    return(page_info)
-
-
-# TODO: Make a function to pull out all the info from the infobox
-# THIS FUNCTION IS JUST A PLACEHOLDER!
-def parse_infobox(infobox_html):
-    # info_box was the text only way to parse.
-    # We should keep it as html and parse it that way to pull out multiple locations, etc.
-    if info_box is not None:
-        # Get their name
-        page_info['Name'] = info_box.find(class_='heading').get_text().strip()
-        page_info['Description'] = info_box.find_next_sibling('p').get_text().strip()
-        # Get their details
-        # get all dt/dd pairs. This uses list comprehension to create list of text for each element
-        # It ends up being value, pairs... 'Race': 'Human', 'Level': '11'...
-        details = dict(zip([k.get_text().strip() for k in info_box.find_all('dt')],
-                           [v.get_text().strip() for v in info_box.find_all('dd')]))
+    # parse infobox
+    if 'InfoBox' in page_info.keys():
+        ib = page_info['InfoBox']
+        page_info['IB_Name'] = ib.find('p', class_='heading').get_text().strip()
+        details = dict(zip([k.get_text().strip().replace(" ", "_") for k in ib.find_all('dt')],
+                           [v for v in ib.find_all('dd')]))
         for k, v in details.items():
             # TODO: Some keys have multiple values (location). This should be broken out somehow.
-            page_info[k] = v
+            child_count = 0
+            multiples = {}
+            for tag in v.children:
+                if isinstance(tag, bs.element.NavigableString):
+                    continue
+                if tag.name not in ('br', 'small'):
+                    if tag.name == 'a':
+                        multiples[child_count] = tag.get_text().strip()
+                    #print(tag)
+                    child_count += 1
+            print(k + ": " + str(child_count))
+            if child_count > 1:
+                page_info['IB_' + k] = multiples
+            else:
+                page_info['IB_' + k] = v.get_text().strip()
+
+    # Parse sections
+    if 'Description_Data' in page_info.keys():
+        desc_data = page_info['Description_Data']
+        for tag in desc_data.children:
+            if isinstance(tag, bs.element.NavigableString):
+                continue
+            print(tag)
+            if tag.name == 'blockquote':
+                bq = tag.get_text().strip()
+                if 'Description_Quote' in page_info.keys():
+                    page_info['Description_Quote'].append(bq)
+                else:
+                    page_info['Description_Quote'] = bq
+            elif tag.name == 'p':
+                desc_text = tag.get_text().strip()
+                if 'Description' in page_info.keys():
+                    page_info['Description'].append(desc_text)
+                else:
+                    page_info['Description'] = desc_text
+
+    return(page_info)
 
 # Get story involvement (breaking it out because it is a bit involved)
 #TODO: does story involvement need to be their own table?
@@ -205,7 +231,9 @@ def main(root_path, category):
     # print("saving to file: /test_file.csv")
     df.to_csv('test_file.csv', index = False, header = True)
     print(df)
-    # print(df.Description[2])
+    print(df.IB_Location[2])
+    print(df.IB_Race[2])
+    print(df.IB_Rank[2])
     # print(df.TOC[2])
 
 if __name__ == "__main__":
