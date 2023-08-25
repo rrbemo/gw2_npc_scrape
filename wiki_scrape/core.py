@@ -3,9 +3,33 @@ import bs4 as bs
 import urllib.request
 import pandas as pd
 
-def get_category_pages(root_path, category):
+def get_category_pages(root_path, category, get_all = True):
     category_path = root_path + '/wiki/Category:' + category
-    sauce = urllib.request.urlopen(category_path).read()
+    all_pages = []
+    url_pages = get_pages_for_url(root_path, category_path)
+
+    # A "page" here refers to a character page which is displayed. 200 is the max shown per request.
+    # Loop to get more pages while the max number of pages is hit for each query
+    while len(url_pages) >= 200 and get_all:
+        # Get the last page (url) and strip out the name of the page to start from there next time
+        # I pop this off the list so that we don't get duplicates when we append.
+        last_url = url_pages.pop(-1)
+        start_from = last_url.split('/')[-1].replace('_', '+')
+
+        # Append the last set of pages found do the current list.
+        all_pages = all_pages + url_pages
+
+        # Get the next set of pages starting from the last page found last url from the last request.
+        url_pages = get_pages_for_url(root_path, root_path + '/?title=Category:' + category + '&pagefrom=' + start_from)
+
+    # Make sure the last url_page pull is added (or set to) all_pages (outside the loop)
+    all_pages = all_pages + url_pages
+
+    return(all_pages)
+
+def get_pages_for_url(root_path, this_url):
+    # This will return a list of pages for a given URL
+    sauce = urllib.request.urlopen(this_url).read()
     soup = bs.BeautifulSoup(sauce, "lxml")
     pages = []
     for group in soup.find_all(class_='mw-category-group'):
@@ -15,7 +39,6 @@ def get_category_pages(root_path, category):
             url = root_path + row.get('href')
             pages.append(url)
             # pages.append((name, url))
-
     return(pages)
 
 # Get a single page's data
@@ -108,21 +131,24 @@ def get_page_data(page_url):
                            [v for v in ib.find_all('dd')]))
         for k, v in details.items():
             # TODO: Some keys have multiple values (location). This should be broken out somehow.
-            child_count = 0
-            multiples = {}
-            for tag in v.children:
-                if isinstance(tag, bs.element.NavigableString):
-                    continue
-                if tag.name not in ('br', 'small'):
-                    if tag.name == 'a':
-                        multiples[child_count] = tag.get_text().strip()
-                    #print(tag)
-                    child_count += 1
-            #print(k + ": " + str(child_count))
-            if child_count > 1:
-                page_info['IB_' + k] = multiples
-            else:
-                page_info['IB_' + k] = v.get_text().strip()
+            # This is an attempt at pulling out multiples, but some other information is lost.
+            # For nw though, it seems like just putting all the text in and splitting it later on might be best.
+            # child_count = 0
+            # multiples = {}
+            # for tag in v.children:
+            #     if isinstance(tag, bs.element.NavigableString):
+            #         continue
+            #     if tag.name not in ('br', 'small'):
+            #         if tag.name == 'a':
+            #             multiples[child_count] = tag.get_text().strip()
+            #         #print(tag)
+            #         child_count += 1
+            # #print(k + ": " + str(child_count))
+            # if child_count > 1:
+            #     page_info['IB_' + k] = multiples
+            # else:
+            #     page_info['IB_' + k] = v.get_text().strip()
+            page_info['IB_' + k] = v.get_text().strip()
         del page_info['InfoBox_RAW']
 
     # Parse description data
@@ -181,50 +207,6 @@ def get_page_data(page_url):
 
     return(page_info)
 
-# Get story involvement (breaking it out because it is a bit involved)
-#TODO: does story involvement need to be their own table?
-def get_story_involvement(page_url, page_soup):
-    # This should be organized in the following way:
-        # [{ 'Story': 'Personal Story', 'Chapter': 'Chapter 2', 'Path': 'Some path', 'Name': 'Thicker Than Water' }, ... ]
-    all_involvements = []
-    for tag in page_soup.find(id = 'Story_involvement').find_parent('h2').next_siblings:
-        if tag.name == 'h2':
-            # This is no longer the story involvement section
-            break
-        else:
-            # This is an involvement
-            if tag.name == 'h3':
-                # This is the beginning of a new involvement
-                the_story = tag.get_text().strip()
-            elif tag.name == 'ul':
-                # This is where all the chapter, path, and mission name information is stored for that story
-                for subtag in tag.find_all('li', recursive=False):
-                    # This is a new chapter
-                    the_chapter = subtag.get_text().strip()
-                    for subsection in subtag.find('ul').find_all('li', recursive=False):
-                        # This should be path or mission (path with have another ul under it)
-                        # In the case of a path, we will identify it, else we will ignore path
-                        if subsection.find('ul', recursive=False):
-                            # This is a path
-                            the_path = subsection.get_text().strip()
-                            for path_mission in subsection.find('ul').find_all('li', recursive=False):
-                                # This is a mission
-                                the_mission = path_mission.get_text().strip()
-                                all_involvements.append({'Story': the_story,
-                                                         'Chapter': the_chapter,
-                                                         'Mission': the_mission})
-                        else:
-                            # This is a mission
-                            the_mission = subsection.get_text()
-                            all_involvements.append({'Story': the_story,
-                                                     'Chapter': the_chapter,
-                                                     'Mission': the_mission})
-            else:
-                # This is something else which I don't understand and we should skip for now.
-                break
-
-    return(all_involvements)
-
 # Get all pages data (one page at a time)
 def get_data_from_pages(page_urls):
     page_infos = []
@@ -238,18 +220,21 @@ def get_data_from_pages(page_urls):
 def main(root_path, category):
 
     # Pull the pages from a category we want to scrape
+    # pages = get_category_pages(root_path, category, get_all=False) # Only get the first page for testing
     pages = get_category_pages(root_path, category)
-
+    print(pages)
+    print(len(pages))
     # Get some info form the pages (this is pretty raw data that needs further parsing)
-    # page_indecies = [0, 1, 2, 3]
+    # page_indecies = [0, 1, 2, 3, 71]
     # less_pages = [pages[x] for x in page_indecies]
     # page_details = get_data_from_pages(less_pages)
+
     page_details = get_data_from_pages(pages)
     df = pd.DataFrame(page_details)
-
-    # print("saving to file: /test_file.csv")
     df.to_csv('test_file.csv', index=False, header=True)
-    print(df)
+    print("saving to file: /test_file.csv")
+    # print(df)
+    # print(df['IB_Location'])
 
 if __name__ == "__main__":
     main('https://wiki.guildwars2.com', "story_characters")
