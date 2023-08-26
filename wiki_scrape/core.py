@@ -2,6 +2,7 @@
 import bs4 as bs
 import urllib.request
 import pandas as pd
+import urllib.parse
 
 def get_category_pages(root_path, category, get_all = True):
     category_path = root_path + '/wiki/Category:' + category
@@ -14,7 +15,7 @@ def get_category_pages(root_path, category, get_all = True):
         # Get the last page (url) and strip out the name of the page to start from there next time
         # I pop this off the list so that we don't get duplicates when we append.
         last_url = url_pages.pop(-1)
-        start_from = last_url.split('/')[-1].replace('_', '+')
+        start_from = urllib.parse.quote(last_url.split('/')[-1])
 
         # Append the last set of pages found do the current list.
         all_pages = all_pages + url_pages
@@ -126,7 +127,9 @@ def get_page_data(page_url):
     # parse infobox
     if 'InfoBox_RAW' in page_info.keys():
         ib = page_info['InfoBox_RAW']
-        page_info['IB_Name'] = ib.find('p', class_='heading').get_text().strip()
+        heading = ib.find('p', class_='heading')
+        if heading:
+            page_info['IB_Name'] = heading.get_text().strip()
         details = dict(zip([k.get_text().strip().replace(" ", "_") for k in ib.find_all('dt')],
                            [v for v in ib.find_all('dd')]))
         for k, v in details.items():
@@ -211,7 +214,11 @@ def get_page_data(page_url):
 def get_data_from_pages(page_urls):
     page_infos = []
     # Remove the "Story Characters" page if it is in the list of URLS. This is a circular page and creates clutter.
-    page_urls.remove('https://wiki.guildwars2.com/wiki/Story_characters')
+    sc_url = 'https://wiki.guildwars2.com/wiki/Story_characters'
+    while sc_url in page_urls:
+        page_urls.remove(sc_url)
+
+    # Scrape the data for each page.
     for page_url in page_urls:
         page_infos.append(get_page_data(page_url))
 
@@ -231,13 +238,14 @@ def main(root_path, category):
 
     page_details = get_data_from_pages(pages)
     df = pd.DataFrame(page_details)
-    df.to_csv('test_file.csv', index=False, header=True)
-    print("saving to file: /test_file.csv")
+    df.to_csv('category.csv', index=False, header=True)
+    print("saving to file: /" + category + ".csv")
     # print(df)
     # print(df['IB_Location'])
 
 if __name__ == "__main__":
-    main('https://wiki.guildwars2.com', "story_characters")
+   # main('https://wiki.guildwars2.com', "story_characters")
+    main('https://wiki.guildwars2.com', 'Normal_NPCs')
 
     # categories to check:
     # story_characters
@@ -248,3 +256,4 @@ if __name__ == "__main__":
         # Epic_NPCs
         # Legendary_NPCs
         # Ambient_creatures
+        # Merchants
