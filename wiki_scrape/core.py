@@ -3,6 +3,7 @@ import bs4 as bs
 import urllib.request
 import pandas as pd
 import urllib.parse
+from wiki_parser import *
 
 def get_category_pages(root_path, category, get_all = True):
     category_path = root_path + '/wiki/Category:' + category
@@ -124,99 +125,19 @@ def get_page_data(page_url):
                 else:
                     page_info[section_raw] = tag
 
-    # parse infobox
-    if 'InfoBox_RAW' in page_info.keys():
-        ib = page_info['InfoBox_RAW']
-        heading = ib.find('p', class_='heading')
-        if heading:
-            page_info['IB_Name'] = heading.get_text().strip()
-        details = dict(zip([k.get_text().strip().replace(" ", "_") for k in ib.find_all('dt')],
-                           [v for v in ib.find_all('dd')]))
-        for k, v in details.items():
-            # TODO: Some keys have multiple values (location). This should be broken out somehow.
-            # This is an attempt at pulling out multiples, but some other information is lost.
-            # For nw though, it seems like just putting all the text in and splitting it later on might be best.
-            # child_count = 0
-            # multiples = {}
-            # for tag in v.children:
-            #     if isinstance(tag, bs.element.NavigableString):
-            #         continue
-            #     if tag.name not in ('br', 'small'):
-            #         if tag.name == 'a':
-            #             multiples[child_count] = tag.get_text().strip()
-            #         #print(tag)
-            #         child_count += 1
-            # #print(k + ": " + str(child_count))
-            # if child_count > 1:
-            #     page_info['IB_' + k] = multiples
-            # else:
-            #     page_info['IB_' + k] = v.get_text().strip()
-            page_info['IB_' + k] = v.get_text().strip()
-        del page_info['InfoBox_RAW']
-
-    # Parse description data
-    if 'Description_RAW' in page_info.keys():
-        desc_data = page_info['Description_RAW']
-        for tag in desc_data.find_all(recursive=False):
-            if isinstance(tag, bs.element.NavigableString):
-                if 'Description' in page_info.keys():
-                    page_info['Description'] += tag
-                else:
-                    page_info['Description'] = tag
-            elif tag.name == 'blockquote':
-                bq = tag.get_text().strip()
-                if 'Description_Quote_CLEAN' in page_info.keys():
-                    page_info['Description_Quote'] += '\n' + bq
-                else:
-                    page_info['Description_Quote'] = bq
-            else: #if tag.name == 'p':
-                desc_text = tag.get_text().strip()
-                if 'Description_CLEAN' in page_info.keys():
-                    page_info['Description'] += '\n' + desc_text
-                else:
-                    page_info['Description'] = desc_text
-        # Lastly, remove the RAW piece here so we don't run it again below:
-        del page_info['Description_RAW']
-
-    # Raw sections
-    raw_sections = [x for x in page_info.keys() if x.endswith('_RAW')]
-
-    # Parse description data
-    for section in raw_sections:
-        section_cleaned = section.replace('_RAW', '')
-        data = page_info[section]
-        for tag in data:
-            if isinstance(tag, bs.element.NavigableString):
-                if section_cleaned in page_info.keys():
-                    page_info[section_cleaned] += tag
-                else:
-                    page_info[section_cleaned] = tag
-            elif tag.name == 'div':
-                continue  # skip divs for now
-            else:  # if tag.name == 'p':
-                data_text = tag.get_text().strip()
-                if section_cleaned in page_info.keys():
-                    page_info[section_cleaned] += '\n' + data_text
-                else:
-                    page_info[section_cleaned] = data_text
-        # print(section_cleaned)
-        # print(page_info[section_cleaned])
-        # Remove the raw form from the dictionary
-        del page_info[section]
-
-
-
-    # Parse other sections
-
     return(page_info)
 
 # Get all pages data (one page at a time)
 def get_data_from_pages(page_urls):
     page_infos = []
     # Remove the "Story Characters" page if it is in the list of URLS. This is a circular page and creates clutter.
-    sc_url = 'https://wiki.guildwars2.com/wiki/Story_characters'
-    while sc_url in page_urls:
-        page_urls.remove(sc_url)
+    sc_url = ['https://wiki.guildwars2.com/wiki/Story_characters',
+              'https://wiki.guildwars2.com/wiki/Legendary_weapon',
+              'https://wiki.guildwars2.com/wiki/Legendary_weapon/table']
+    for a_url in sc_url:
+        while a_url in page_urls:
+            print("removing '" + a_url + "'")
+            page_urls.remove(a_url)
 
     # Scrape the data for each page.
     for page_url in page_urls:
@@ -224,11 +145,68 @@ def get_data_from_pages(page_urls):
 
     return(page_infos)
 
-def main(root_path, category):
+def get_links_from_pages(root_path, page_urls):
+    page_links = []
+    # Remove any circular references related to the category being searched.
+    sc_url = ['https://wiki.guildwars2.com/wiki/Story_characters',
+              'https://wiki.guildwars2.com/wiki/Legendary_weapon',
+              'https://wiki.guildwars2.com/wiki/Legendary_weapon/table']
+    for a_url in sc_url:
+        while a_url in page_urls:
+            print("removing '" + a_url + "'")
+            page_urls.remove(a_url)
 
+    # Scrape the data for each page.
+    print(page_urls)
+    for page_url in page_urls:
+        page_links += get_page_links(root_path, page_url)
+
+    return(page_links)
+
+# Get all links back to the same domain
+def get_page_links(root_path, page_url):
+    # Connections should be a list of dictionary items (connections) with two keys each, "to" and "from".
+    # "to" should be where the link goes to and "from" should be this page url.
+    connections = []
+    sauce = urllib.request.urlopen(page_url).read()
+    soup = bs.BeautifulSoup(sauce, "lxml")
+    # Find all anchors
+    all_anchors = soup.find(id='mw-content-text').find('div', class_='mw-parser-output').find_all('a')
+
+    for anchor in all_anchors:
+        relationship = None
+        if 'href' in anchor.attrs.keys():
+            this_href = anchor['href']
+            if this_href.startswith('//'):
+                if 'action=edit' not in this_href:
+                    # This is an external link. We may want to do something different with these links
+                    relationship = {'to': this_href,
+                                    'from': page_url}
+                else:
+                    continue  # Skip this because it is an edit link
+            elif this_href.startswith('#'):
+                # This is a link to this page, so ignore it
+                continue
+            elif this_href.startswith('/'):
+                if 'action=edit' not in this_href:
+                    # This should be a link to this same root wiki (primarily what we are looking for
+                    relationship = {'to': root_path + this_href,
+                                    'from': page_url}
+                else:
+                    continue  # Skip this because it is an edit link
+            else:
+                # Else we will just save it for now.
+                relationship = {'to': this_href,
+                                'from': page_url}
+        if relationship:
+            connections.append(relationship)
+
+    return connections
+
+def scrape_html(root_path, category):
     # Pull the pages from a category we want to scrape
-    # pages = get_category_pages(root_path, category, get_all=False) # Only get the first page for testing
-    pages = get_category_pages(root_path, category)
+    pages = get_category_pages(root_path, category, get_all=False) # Only get the first page for testing
+    #pages = get_category_pages(root_path, category)
     print(pages)
     print(len(pages))
     # Get some info form the pages (this is pretty raw data that needs further parsing)
@@ -238,15 +216,76 @@ def main(root_path, category):
 
     page_details = get_data_from_pages(pages)
     df = pd.DataFrame(page_details)
-    df.to_csv('category.csv', index=False, header=True)
-    print("saving to file: /" + category + ".csv")
+    #df.to_csv(category + '_text.csv', index=False, header=True)
+    df.to_csv(category + '_raw.csv', index=False, header=True)
+    print("saving to file: /" + category + "_text.csv")
+
+def scrape_text(root_path, category):
+
+    # Pull the pages from a category we want to scrape
+    pages = get_category_pages(root_path, category, get_all=False) # Only get the first page for testing
+    #pages = get_category_pages(root_path, category)
+    print(pages)
+    print(len(pages))
+    # Get some info form the pages (this is pretty raw data that needs further parsing)
+    # page_indecies = [0, 1, 2, 3, 71]
+    # less_pages = [pages[x] for x in page_indecies]
+    # page_details = get_data_from_pages(less_pages)
+
+    # This is a list of all pages and their raw details
+    page_details_raw = get_data_from_pages(pages)
+    page_details = []
+    # Loop each page
+    for a_page in page_details_raw:
+        #print(a_page.keys())
+        raw_sections = [x for x in a_page.keys() if x.endswith('_RAW')]
+        # Pre-load the dictionary with all non-raw sections
+        a_page_clean = {k:v for (k,v) in a_page.items() if not k.endswith('_RAW')}
+        # Clean all sections for page
+        for section in raw_sections:
+            # Add sections back for each raw section. A single section may come back as multiple
+            temp_dict = parse_raw_section(a_page[section], section, category)
+            a_page_clean.update(temp_dict) # merge the two dictionaries together (could also use | in 3.9+)
+        page_details.append(a_page_clean)
+
+    df = pd.DataFrame(page_details)
+    #df.to_csv(category + '_text.csv', index=False, header=True)
+    df.to_csv(category + '_text.csv', index=False, header=True)
+    print("saving to file: /" + category + "_text.csv")
     # print(df)
     # print(df['IB_Location'])
 
+def scrape_links(root_path, category):
+    # Pull the pages from a category we want to scrape
+    # pages = get_category_pages(root_path, category, get_all=False)  # Only get the first page for testing
+    pages = get_category_pages(root_path, category)
+    # print(pages)
+    # print(len(pages))
+    # Get some info form the pages (this is pretty raw data that needs further parsing)
+    # page_indecies = [0, 1, 2, 3, 71]
+    # less_pages = [pages[x] for x in page_indecies]
+    # page_links = get_links_from_pages(root_path, less_pages)
+
+    page_links = get_links_from_pages(root_path, pages)
+
+    df = pd.DataFrame(page_links)
+    df.to_csv(category + '_links.csv', index=False, header=True)
+    print("saving to file: /" + category + "_links.csv")
+
 if __name__ == "__main__":
    # main('https://wiki.guildwars2.com', "story_characters")
-    main('https://wiki.guildwars2.com', 'Normal_NPCs')
+    # scrape_text('https://wiki.guildwars2.com', 'Normal_NPCs')
+    # scrape_links('https://wiki.guildwars2.com', 'Normal_NPCs')
+    # scrape_links('https://wiki.guildwars2.com', 'Veteran_NPCs')
+    # scrape_links('https://wiki.guildwars2.com', 'Elite_NPCs')
+    #scrape_links('https://wiki.guildwars2.com', 'Legendary_NPCs')
 
+    # Test for weapons scraping
+    scrape_html('https://wiki.guildwars2.com', 'Legendary_weapons')
+    #scrape_text('https://wiki.guildwars2.com', 'Legendary_weapons')
+
+    # Test for weapons api
+    #scrape_api('https://wiki.guildwars2.com', 'Legendary_weapons')
     # categories to check:
     # story_characters
     # All "NPCs_by_rank" below
@@ -257,3 +296,5 @@ if __name__ == "__main__":
         # Legendary_NPCs
         # Ambient_creatures
         # Merchants
+
+   # It would be nice to have a list of all other linked pages in this wiki
